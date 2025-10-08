@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: dw_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: dw
+    ports:
+      - "5432:5432"
+    networks:
+      - elt_network
+    volumes:
+      - dw_data:/var/lib/postgresql/data
+      - ./datasets:/datasets:ro 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dw"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  pipeline:
+    build:
+      context: ./elt                  # Dockerfile lives in ./elt
+      dockerfile: Dockerfile
+    container_name: dw_pipeline
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      POSTGRES_DB: dw
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+    depends_on:
+      db:
+        condition: service_healthy
+    # Mount your code and SQL into the container
+    volumes:
+      - ./elt:/app/elt:ro             # runner code
+      - ./scripts:/app/scripts:ro     # ALL your SQL (init/bronze/silver/gold) 
+      - ./tests:/app/tests:ro         # DQ SQL
+    working_dir: /app
+    entrypoint: ["python", "/app/elt/elt.py"]   # call the real path explicitly
+    restart: "no"
+    networks:
+      - elt_network
+
+volumes:
+  dw_data:
+
+networks:
+  elt_network:
+    driver: bridge
